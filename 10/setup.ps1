@@ -3,6 +3,7 @@ write-host "Starting script at $(Get-Date)"
 
 Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
 Install-Module -Name Az.Synapse -Force
+Install-Module -Name SqlServer -Force -AllowClobber
 
 # Handle cases where the user has multiple subscriptions
 $subs = Get-AzSubscription | Select-Object
@@ -81,9 +82,12 @@ foreach ($provider in $provider_list){
 Write-Host "Your randomly-generated suffix for Azure resources is $suffix"
 $resourceGroupName = "dp000-$suffix"
 
-# Region is fixed to Central India for every resource in this deployment
-$Region = "centralindia"
-Write-Host "Using fixed region: $Region (Central India) for all resources."
+# Region is fixed for every resource in this deployment.
+# Central India ("centralindia") is blocked by this subscription's "Allowed resource deployment regions" policy.
+# Of the regions that policy does allow (uaenorth, eastasia, indonesiacentral, indiasouthcentral, malaysiawest),
+# uaenorth is the only one that supports both Microsoft.Synapse and Microsoft.Purview, so it's used here.
+$Region = "uaenorth"
+Write-Host "Using fixed region: $Region for all resources."
 
 Write-Host "Creating $resourceGroupName resource group in $Region ..."
 New-AzResourceGroup -Name $resourceGroupName -Location $Region | Out-Null
@@ -168,13 +172,13 @@ write-host "Creating databases..."
 $serverlessSQL = Get-Content -Path "serverless.sql" -Raw
 $serverlessSQL = $serverlessSQL.Replace("datalakexxxxxxx", $dataLakeAccountName)
 Set-Content -Path "serverless$suffix.sql" -Value $serverlessSQL
-sqlcmd -S "$synapseWorkspace-ondemand.sql.azuresynapse.net" -U $sqlUser -P $sqlPassword -d master -I -i serverless$suffix.sql
+Invoke-Sqlcmd -ServerInstance "$synapseWorkspace-ondemand.sql.azuresynapse.net" -Username $sqlUser -Password $sqlPassword -Database "master" -InputFile "serverless$suffix.sql" -TrustServerCertificate
 
 # Create the 3 tables in the dedicated SQL pool and grant the service principal read access
 $dedicatedSQL = Get-Content -Path "dedicated.sql" -Raw
 $dedicatedSQL = $dedicatedSQL.Replace("SQLSERVICEPRINCIPALNAME", $spName)
 Set-Content -Path "dedicated$suffix.sql" -Value $dedicatedSQL
-sqlcmd -S "$synapseWorkspace.sql.azuresynapse.net" -U $sqlUser -P $sqlPassword -d $sqlDatabaseName -I -i dedicated$suffix.sql
+Invoke-Sqlcmd -ServerInstance "$synapseWorkspace.sql.azuresynapse.net" -Username $sqlUser -Password $sqlPassword -Database $sqlDatabaseName -InputFile "dedicated$suffix.sql" -TrustServerCertificate
 
 
 # Pause SQL Pool
